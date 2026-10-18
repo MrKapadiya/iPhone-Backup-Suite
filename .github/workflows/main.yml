@@ -1,64 +1,59 @@
-# -*- mode: python ; coding: utf-8 -*-
-"""
-PyInstaller Cross-Architecture Spec File for macOS (universal2 / arm64 / x86_64),
-Windows (x64 / ARM64), and Linux (x64 / ARM64).
-Includes Pillow and pillow-heif for optional HEIC-to-JPEG conversion and live thumbnails.
-"""
+name: Build Cross-Architecture Binaries (macOS, Windows, Linux)
 
-import sys
-from PyInstaller.utils.hooks import collect_all
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
-datas, binaries, hiddenimports = [], [], []
-for pkg in ("pymobiledevice3", "construct", "pyimg4", "qh3", "cryptography", "PIL", "pillow_heif"):
-    try:
-        d, b, h = collect_all(pkg)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:
-        pass
+jobs:
+  build_desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+            artifact_name: iPhoneBackupStudio-macOS-arm64
+          - os: macos-13
+            arch: x86_64
+            artifact_name: iPhoneBackupStudio-macOS-x86_64
+          - os: windows-latest
+            arch: x64
+            artifact_name: iPhoneBackupStudio-Windows-x64
+          - os: ubuntu-22.04
+            arch: x64
+            artifact_name: iPhoneBackupStudio-Linux-x64
 
-a = Analysis(
-    ['../desktop_app/main.py'],
-    pathex=['..'],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-)
-pyz = PYZ(a.pure)
+    runs-on: ${{ matrix.os }}
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='iPhoneBackupStudio',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=False,
-)
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='iPhoneBackupStudio',
-)
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-if sys.platform == 'darwin':
-    app = BUNDLE(
-        coll,
-        name='iPhoneBackupStudio.app',
-        icon=None,
-        bundle_identifier='com.yourorg.iPhoneBackupStudio',
-    )
+      - name: Install Linux System Dependencies (usbmuxd & Qt6 XCB)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y usbmuxd libimobiledevice6 libxcb-cursor0 libxkbcommon-x11-0
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packaging/requirements.txt
+
+      - name: Build Standalone Bundle with PyInstaller
+        working-directory: packaging
+        run: |
+          pyinstaller iphone_backup_studio.spec --noconfirm
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: packaging/dist/
